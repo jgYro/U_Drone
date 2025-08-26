@@ -18,6 +18,7 @@ import SpeedIcon from '@mui/icons-material/Speed';
 import CloudQueueIcon from '@mui/icons-material/CloudQueue';
 import TerminalIcon from '@mui/icons-material/Terminal';
 import WebIcon from '@mui/icons-material/Web';
+import AnalyticsIcon from '@mui/icons-material/Analytics';
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -36,6 +37,13 @@ export default function Home() {
       sublabel: "MAIN HUB",
       path: "/",
       primary: true
+    },
+    { 
+      icon: <AnalyticsIcon sx={{ fontSize: 40 }} />, 
+      label: "DATA ANALYTICS", 
+      sublabel: "THREAT ANALYSIS",
+      path: "/data",
+      primary: false
     },
     { 
       icon: <SecurityIcon sx={{ fontSize: 40 }} />, 
@@ -131,7 +139,7 @@ export default function Home() {
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' },
+            gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)', lg: 'repeat(4, 1fr)' },
             gap: 3,
             mb: 8,
           }}
