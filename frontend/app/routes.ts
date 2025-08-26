@@ -6,4 +6,5 @@ export default [
   route("api-demo", "routes/api-demo.tsx"),
   route("data", "routes/data.tsx"),
   route("ukraine-fire-tracking", "routes/ukraine-fire-tracking.tsx"),
+  route("settings", "routes/settings.tsx"),
 ] satisfies RouteConfig;

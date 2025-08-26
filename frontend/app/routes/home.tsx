@@ -20,6 +20,7 @@ import TerminalIcon from '@mui/icons-material/Terminal';
 import WebIcon from '@mui/icons-material/Web';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment';
+import SettingsIcon from '@mui/icons-material/Settings';
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -65,6 +66,13 @@ export default function Home() {
       label: "API TERMINAL", 
       sublabel: "DATA STREAM",
       path: "/api-demo",
+      primary: false
+    },
+    { 
+      icon: <SettingsIcon sx={{ fontSize: 40 }} />, 
+      label: "SETTINGS", 
+      sublabel: "FIRE DATA CONFIG",
+      path: "/settings",
       primary: false
     },
   ];
@@ -147,7 +155,7 @@ export default function Home() {
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)', lg: 'repeat(4, 1fr)' },
+            gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)', xl: 'repeat(6, 1fr)' },
             gap: 3,
             mb: 8,
           }}
