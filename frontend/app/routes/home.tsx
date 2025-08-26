@@ -19,6 +19,7 @@ import CloudQueueIcon from '@mui/icons-material/CloudQueue';
 import TerminalIcon from '@mui/icons-material/Terminal';
 import WebIcon from '@mui/icons-material/Web';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
+import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment';
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -37,6 +38,13 @@ export default function Home() {
       sublabel: "MAIN HUB",
       path: "/",
       primary: true
+    },
+    { 
+      icon: <LocalFireDepartmentIcon sx={{ fontSize: 40 }} />, 
+      label: "FIRE TRACKING", 
+      sublabel: "UKRAINE MONITORING",
+      path: "/ukraine-fire-tracking",
+      primary: false
     },
     { 
       icon: <AnalyticsIcon sx={{ fontSize: 40 }} />, 

@@ -22,12 +22,15 @@ type Pages = {
   "/data": {
     params: {};
   };
+  "/ukraine-fire-tracking": {
+    params: {};
+  };
 };
 
 type RouteFiles = {
   "root.tsx": {
     id: "root";
-    page: "/" | "/about" | "/api-demo" | "/data";
+    page: "/" | "/about" | "/api-demo" | "/data" | "/ukraine-fire-tracking";
   };
   "routes/home.tsx": {
     id: "routes/home";
@@ -44,5 +47,9 @@ type RouteFiles = {
   "routes/data.tsx": {
     id: "routes/data";
     page: "/data";
+  };
+  "routes/ukraine-fire-tracking.tsx": {
+    id: "routes/ukraine-fire-tracking";
+    page: "/ukraine-fire-tracking";
   };
 };
