@@ -1501,7 +1501,7 @@ export default function UkraineFireTracking() {
                               Region:
                             </Typography>
                             <Typography variant="body2">
-                              {predictionResult.analysis.location.region}
+                              {predictionResult.analysis?.location?.region || 'N/A'}
                             </Typography>
                           </Box>
                           
@@ -1676,7 +1676,7 @@ export default function UkraineFireTracking() {
       {/* Fire Tracking App Script */}
       <script dangerouslySetInnerHTML={{
         __html: `
-        class FireTrackingApp {
+        window.FireTrackingApp = class FireTrackingApp {
           constructor() {
             this.map = null;
             this.socket = null;
@@ -1736,6 +1736,18 @@ export default function UkraineFireTracking() {
           }
 
           initializeMap() {
+            const mapElement = document.getElementById('map');
+            if (!mapElement) {
+              console.error('Map element not found');
+              return;
+            }
+            
+            // Clear any existing map
+            if (mapElement._leaflet_id) {
+              mapElement._leaflet_id = null;
+              mapElement.innerHTML = '';
+            }
+            
             this.map = L.map('map', {
               center: [48.3794, 31.1656],
               zoom: 7,
