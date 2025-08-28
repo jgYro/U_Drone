@@ -1,26 +1,27 @@
 # Multi-stage build for production React app
-FROM node:20-alpine AS builder
-
-# Set working directory
+FROM node:20-alpine AS development-dependencies-env
+COPY . /app
 WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-
-# Install ALL dependencies (including dev dependencies for build)
 RUN npm ci
 
-# Copy source code
-COPY . .
+FROM node:20-alpine AS production-dependencies-env
+COPY ./package.json package-lock.json /app/
+WORKDIR /app
+RUN npm ci --omit=dev
 
-# Build the application
+FROM node:20-alpine AS build-env
+COPY . /app/
+COPY --from=development-dependencies-env /app/node_modules /app/node_modules
+WORKDIR /app
+
+
 RUN npm run build
 
 # Production stage with nginx
 FROM nginx:alpine
 
-# Copy built app from builder stage
-COPY --from=builder /app/build /usr/share/nginx/html
+# Copy the client build contents to nginx root (not the entire build structure)
+COPY --from=build-env /app/build/client /usr/share/nginx/html
 
 # Copy custom nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf

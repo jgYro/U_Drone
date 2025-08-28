@@ -33,17 +33,390 @@ export default function UkraineFireTracking() {
             const leafletScript = document.createElement('script');
             leafletScript.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
             leafletScript.onload = () => {
-              initializeFireTrackingApp();
+              loadFireTrackingAppScript();
             };
             document.head.appendChild(leafletScript);
           } else {
-            initializeFireTrackingApp();
+            loadFireTrackingAppScript();
           }
         };
         document.head.appendChild(socketScript);
       } else if (window.L) {
-        initializeFireTrackingApp();
+        loadFireTrackingAppScript();
       }
+    };
+
+    const loadFireTrackingAppScript = () => {
+      // Create and execute the FireTrackingApp script
+      const script = document.createElement('script');
+      script.textContent = `
+        class FireTrackingApp {
+          constructor() {
+            this.map = null;
+            this.socket = null;
+            this.config = null;
+            this.currentMarkers = new Map();
+            this.playbackState = 'stopped';
+            this.fadeTimers = new Map();
+            this.simulationEnded = false;
+            
+            this.fireEvents = [];
+            this.currentSimulationTime = null;
+            this.currentSpeed = 'slow';
+            this.currentFires = []; // Track current active fires
+            
+            this.fireHistory = [];
+            this.maxHistoryLength = 20;
+            
+            this.initializeApp();
+          }
+
+          initializeApp() {
+            this.pulseTimer = null;
+            
+            // Connect to main backend server on port 5001
+            this.socket = io('http://localhost:5001');
+            this.setupSocketEvents();
+            
+            this.initializeMap();
+            this.setupUIHandlers();
+            this.initializeFireChart();
+            
+            const activeFiresEl = document.getElementById('active-fires');
+            const totalFiresEl = document.getElementById('total-fires');
+            if (activeFiresEl) activeFiresEl.textContent = '0';
+            if (totalFiresEl) totalFiresEl.textContent = '0';
+          }
+
+          setupSocketEvents() {
+            this.socket.on('connect', () => {
+              console.log('Connected to fire tracking server');
+            });
+
+            this.socket.on('fire_update', (data) => {
+              console.log('🔥 RECEIVED fire_update:', data.fires.length, 'fires at', data.timestamp);
+              this.handleFireUpdate(data);
+            });
+
+            this.socket.on('playback_started', (data) => {
+              console.log('🚀 RECEIVED playback_started event:', data);
+              this.simulationEnded = false;
+              this.clearAllLayers();
+              this.fireEvents = [];
+              this.currentSimulationTime = null;
+              
+              this.startPulseTimer();
+              
+              const activeFiresEl = document.getElementById('active-fires');
+              const totalFiresEl = document.getElementById('total-fires');
+              if (activeFiresEl) activeFiresEl.textContent = '0';
+              if (totalFiresEl) totalFiresEl.textContent = '0';
+              
+              this.playbackState = 'playing';
+              this.updatePlaybackControls();
+              this.updateStatus('Playing');
+              this.hideLoading();
+            });
+
+            this.socket.on('playback_stopped', () => {
+              console.log('🛑 RECEIVED playback_stopped event');
+              this.simulationEnded = true;
+              this.playbackState = 'stopped';
+              this.updatePlaybackControls();
+              this.updateStatus('Stopped');
+              this.stopAllLayerFades();
+              this.stopPulseTimer();
+              this.hideLoading();
+            });
+
+            this.socket.on('playback_ended', () => {
+              console.log('🏁 RECEIVED playback_ended event');
+              this.simulationEnded = true;
+              this.playbackState = 'stopped';
+              this.stopAllLayerFades();
+              this.stopPulseTimer();
+              this.updatePlaybackControls();
+              this.updateStatus('Ready');
+              this.hideLoading();
+            });
+          }
+
+          initializeMap() {
+            this.map = L.map('map', {
+              center: [48.3794, 31.1656],
+              zoom: 7,
+              minZoom: 6,
+              maxZoom: 8,
+              zoomControl: false
+            });
+
+            const tileLayer = L.tileLayer('http://localhost:5001/tiles/{z}/{x}/{y}.png', {
+              attribution: 'Map data © OpenStreetMap contributors',
+              maxZoom: 8,
+              minZoom: 6
+            });
+
+            tileLayer.addTo(this.map);
+            this.canvasLayers = [];
+            this.fadeTimers = [];
+          }
+
+          setupUIHandlers() {
+            const playBtn = document.getElementById('play-btn');
+            if (playBtn) {
+              playBtn.addEventListener('click', () => {
+                this.startPlayback();
+              });
+            }
+
+            const stopBtn = document.getElementById('stop-btn');
+            if (stopBtn) {
+              stopBtn.addEventListener('click', () => {
+                this.stopPlayback();
+              });
+            }
+          }
+
+          startPlayback() {
+            const startDate = document.getElementById('start-date')?.value;
+            const endDate = document.getElementById('end-date')?.value;
+            
+            if (!startDate || !endDate) return;
+
+            console.log('📡 Starting playback:', startDate, 'to', endDate);
+            this.socket.emit('start_playback', {
+              start_date: startDate,
+              end_date: endDate,
+              speed: 'normal'
+            });
+          }
+
+          stopPlayback() {
+            this.socket.emit('stop_playback');
+          }
+
+          handleFireUpdate(data) {
+            const { fires, timestamp, statistics } = data;
+            console.log('Handling fire update:', fires.length, 'fires');
+            
+            // Store current fires for active count
+            this.currentFires = fires;
+            
+            // Update the time display
+            this.updateTimeDisplay(timestamp);
+            
+            if (fires.length > 0) {
+              this.createCanvasLayer(fires, timestamp);
+            }
+            
+            this.updateStatistics(statistics);
+          }
+
+          createCanvasLayer(fires, timestamp) {
+            // Performance: Limit active layers
+            if (this.canvasLayers.length > 5) {
+              const oldLayer = this.canvasLayers.shift();
+              if (oldLayer && this.map.hasLayer(oldLayer)) {
+                this.map.removeLayer(oldLayer);
+              }
+            }
+            
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            const mapSize = this.map.getSize();
+            canvas.width = mapSize.x;
+            canvas.height = mapSize.y;
+            
+            const bounds = this.map.getBounds();
+            
+            // Optimize: Set context properties once
+            ctx.lineWidth = 1;
+            
+            fires.forEach(fire => {
+              const point = this.map.latLngToContainerPoint([fire.latitude, fire.longitude]);
+              if (point.x >= 0 && point.x <= mapSize.x && point.y >= 0 && point.y <= mapSize.y) {
+                // Determine fire color based on confidence
+                let color;
+                switch(fire.confidence) {
+                  case 'high': color = '#e74c3c'; break;
+                  case 'medium': color = '#f39c12'; break;
+                  default: color = '#f1c40f'; break;
+                }
+                
+                // Calculate fire size based on FRP (Fire Radiative Power)
+                const size = this.calculateFireSize(fire.frp || 0);
+                
+                // Draw simple fire dot (no glow effects for performance)
+                ctx.beginPath();
+                ctx.arc(point.x, point.y, size, 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.fill();
+              }
+            });
+            
+            const dataURL = canvas.toDataURL();
+            const imageOverlay = L.imageOverlay(dataURL, bounds, {
+              opacity: 1.0,
+              interactive: false
+            });
+            
+            imageOverlay.addTo(this.map);
+            this.canvasLayers.push(imageOverlay);
+            
+            // Simple fade animation
+            this.startLayerFade(imageOverlay);
+          }
+
+          updateStatistics(stats) {
+            // Calculate active fires from the current fires array
+            const currentFireCount = this.currentFires ? this.currentFires.length : 0;
+            const totalFires = stats.total_fires || 0;
+            
+            const activeFiresEl = document.getElementById('active-fires');
+            const totalFiresEl = document.getElementById('total-fires');
+            
+            if (activeFiresEl) activeFiresEl.textContent = String(currentFireCount);
+            if (totalFiresEl) totalFiresEl.textContent = String(totalFires);
+          }
+
+          updatePlaybackControls() {
+            const playBtn = document.getElementById('play-btn');
+            const stopBtn = document.getElementById('stop-btn');
+            
+            if (playBtn) playBtn.disabled = this.playbackState === 'playing';
+            if (stopBtn) stopBtn.disabled = this.playbackState === 'stopped';
+          }
+
+          updateStatus(status) {
+            const statusEl = document.getElementById('playback-status');
+            if (statusEl) statusEl.textContent = status;
+          }
+
+          startPulseTimer() {
+            this.stopPulseTimer();
+            this.pulseTimer = setInterval(() => {
+              const pulse = document.getElementById('interval-pulse');
+              if (pulse) {
+                pulse.classList.add('pulse');
+                setTimeout(() => pulse.classList.remove('pulse'), 200);
+              }
+            }, 1000);
+          }
+          
+          stopPulseTimer() {
+            if (this.pulseTimer) {
+              clearInterval(this.pulseTimer);
+              this.pulseTimer = null;
+            }
+          }
+
+          clearAllLayers() {
+            this.canvasLayers.forEach(layer => {
+              if (this.map.hasLayer(layer)) {
+                this.map.removeLayer(layer);
+              }
+            });
+            this.canvasLayers = [];
+          }
+          
+          stopAllLayerFades() {
+            this.fadeTimers.forEach(timer => clearTimeout(timer));
+            this.fadeTimers = [];
+          }
+
+          hideLoading() {
+            const loading = document.getElementById('loading');
+            if (loading) loading.classList.remove('show');
+          }
+
+          calculateFireSize(frp) {
+            const zoom = this.map.getZoom();
+            // Simpler zoom scaling
+            const zoomScale = Math.max(0.8, Math.min(2.0, (zoom - 6) * 0.3 + 1));
+            
+            // Base size with simple FRP scaling
+            const baseSize = 3;
+            const frpSize = Math.min(8, frp / 10);
+            
+            return Math.round((baseSize + frpSize) * zoomScale);
+          }
+
+          startLayerFade(layer) {
+            // Fast, simple fade animation
+            setTimeout(() => {
+              if (layer && this.map.hasLayer(layer)) {
+                layer.setOpacity(0.5);
+              }
+            }, 300);
+            
+            setTimeout(() => {
+              if (layer && this.map.hasLayer(layer)) {
+                this.map.removeLayer(layer);
+                const index = this.canvasLayers.indexOf(layer);
+                if (index > -1) {
+                  this.canvasLayers.splice(index, 1);
+                }
+              }
+            }, 800);
+          }
+
+          updateTimeDisplay(timestamp) {
+            const date = new Date(timestamp);
+            const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            const day = date.getDate();
+            const month = monthNames[date.getMonth()];
+            const year = date.getFullYear();
+            const display = \`\${month} \${day}, \${year}\`;
+            
+            const element1 = document.getElementById('current-time-1');
+            const element2 = document.getElementById('current-time-2');
+            
+            if (element2) element2.style.opacity = '0';
+            
+            if (element1 && element1.textContent !== display && element1.textContent !== '--') {
+              element1.textContent = display;
+              element1.classList.add('pop');
+              
+              setTimeout(() => {
+                element1.classList.remove('pop');
+              }, 100);
+            } else if (element1 && element1.textContent === '--') {
+              element1.textContent = display;
+            }
+          }
+
+          initializeFireChart() {
+            const chartBars = document.getElementById('fire-chart-bars');
+            if (chartBars) {
+              for (let i = 0; i < this.maxHistoryLength; i++) {
+                const bar = document.createElement('div');
+                bar.className = 'fire-chart-bar';
+                bar.style.height = '2px';
+                chartBars.appendChild(bar);
+              }
+            }
+          }
+
+          resetToReadyState() {
+            console.log('Resetting to ready state');
+            this.updateStatus('Ready');
+            this.updatePlaybackControls();
+          }
+        }
+
+        // Make FireTrackingApp available globally
+        window.FireTrackingApp = FireTrackingApp;
+        console.log('FireTrackingApp class defined and available');
+      `;
+      
+      document.head.appendChild(script);
+      
+      // Wait a moment for the script to execute, then initialize
+      setTimeout(() => {
+        initializeFireTrackingApp();
+      }, 100);
     };
 
     const initializeFireTrackingApp = () => {
@@ -52,8 +425,15 @@ export default function UkraineFireTracking() {
         window.fireApp = null;
       }
       
+      // Wait for the script to execute and class to be available
+      if (typeof window.FireTrackingApp === 'undefined') {
+        console.log('FireTrackingApp class not yet available, retrying in 100ms...');
+        setTimeout(initializeFireTrackingApp, 100);
+        return;
+      }
+      
       try {
-        window.fireApp = new FireTrackingApp();
+        window.fireApp = new window.FireTrackingApp();
         console.log('Fire Tracking App initialized successfully');
         
         // Reset to ready state
@@ -588,772 +968,6 @@ export default function UkraineFireTracking() {
         <div className="spinner"></div>
         <div>Loading fire data...</div>
       </div>
-
-      {/* Fire Tracking App Script */}
-      <script dangerouslySetInnerHTML={{
-        __html: `
-        class FireTrackingApp {
-          constructor() {
-            this.map = null;
-            this.socket = null;
-            this.config = null;
-            this.currentMarkers = new Map();
-            this.playbackState = 'stopped';
-            this.fadeTimers = new Map();
-            this.simulationEnded = false;
-            
-            this.fireEvents = [];
-            this.currentSimulationTime = null;
-            this.currentSpeed = 'slow';
-            
-            this.fireHistory = [];
-            this.maxHistoryLength = 20;
-            
-            this.initializeApp();
-          }
-
-          initializeApp() {
-            this.pulseTimer = null;
-            
-            // Connect to main backend server on port 5000
-            this.socket = io('http://localhost:5000');
-            this.setupSocketEvents();
-            
-            this.initializeMap();
-            this.setupUIHandlers();
-            this.initializeFireChart();
-            
-            const activeFiresEl = document.getElementById('active-fires');
-            const totalFiresEl = document.getElementById('total-fires');
-            if (activeFiresEl) activeFiresEl.textContent = '0';
-            if (totalFiresEl) totalFiresEl.textContent = '0';
-          }
-
-          setupSocketEvents() {
-            this.socket.on('connect', () => {
-              console.log('Connected to fire tracking server');
-            });
-
-            this.socket.on('disconnect', () => {
-              console.log('Disconnected from fire tracking server');
-            });
-
-            this.socket.on('config', (config) => {
-              console.log('Received config:', config);
-              this.config = config;
-              this.updateSpeedLabels();
-            });
-
-            this.socket.on('fire_update', (data) => {
-              console.log('🔥 RECEIVED fire_update:', data.fires.length, 'fires at', data.timestamp);
-              this.handleFireUpdate(data);
-            });
-
-            this.socket.on('playback_started', (data) => {
-              console.log('🚀 RECEIVED playback_started event:', data);
-              this.simulationEnded = false;
-              this.clearAllMarkers();
-              this.clearAllLayers();
-              this.fireEvents = [];
-              this.currentSimulationTime = null;
-              
-              this.startPulseTimer();
-              
-              const activeFiresEl = document.getElementById('active-fires');
-              const totalFiresEl = document.getElementById('total-fires');
-              if (activeFiresEl) activeFiresEl.textContent = '0';
-              if (totalFiresEl) totalFiresEl.textContent = '0';
-              
-              this.playbackState = 'playing';
-              this.updatePlaybackControls();
-              this.updateStatus('Playing');
-              this.hideLoading();
-            });
-
-            this.socket.on('playback_paused', () => {
-              console.log('⏸️ RECEIVED playback_paused event');
-              this.playbackState = 'paused';
-              this.updatePlaybackControls();
-              this.updateStatus('Paused');
-              this.stopPulseTimer();
-              this.stopAllLayerFades();
-            });
-
-            this.socket.on('playback_resumed', () => {
-              console.log('▶️ RECEIVED playback_resumed event');
-              this.playbackState = 'playing';
-              this.updatePlaybackControls();
-              this.updateStatus('Playing');
-              this.startPulseTimer();
-              this.clearAllLayers();
-              this.simulationEnded = false;
-            });
-
-            this.socket.on('playback_stopped', () => {
-              console.log('🛑 RECEIVED playback_stopped event');
-              this.simulationEnded = true;
-              this.playbackState = 'stopped';
-              this.updatePlaybackControls();
-              this.updateStatus('Stopped');
-              this.stopAllLayerFades();
-              this.stopPulseTimer();
-              this.hideLoading();
-            });
-
-            this.socket.on('playback_ended', () => {
-              console.log('🏁 RECEIVED playback_ended event');
-              this.simulationEnded = true;
-              this.playbackState = 'stopped';
-              this.stopAllLayerFades();
-              this.stopPulseTimer();
-              this.updatePlaybackControls();
-              this.updateStatus('Ready');
-              this.hideLoading();
-              
-              setTimeout(() => {
-                const playBtn = document.getElementById('play-btn');
-                const stopBtn = document.getElementById('stop-btn');
-                const pauseBtn = document.getElementById('pause-btn');
-                
-                if (playBtn) playBtn.disabled = false;
-                if (stopBtn) stopBtn.disabled = true;
-                if (pauseBtn) {
-                  pauseBtn.disabled = true;
-                  pauseBtn.textContent = 'Pause';
-                }
-              }, 100);
-            });
-
-            this.socket.on('playback_error', (data) => {
-              console.error('Playback error:', data.error);
-              this.updateStatus(\`Error: \${data.error}\`);
-              this.playbackState = 'stopped';
-              this.updatePlaybackControls();
-              this.hideLoading();
-            });
-
-            this.socket.on('speed_changed', (data) => {
-              this.currentSpeed = data.speed;
-              this.updateSpeedDisplay(data.speed);
-            });
-          }
-
-          initializeMap() {
-            this.map = L.map('map', {
-              center: [48.3794, 31.1656],
-              zoom: 7,
-              minZoom: 6,
-              maxZoom: 8,
-              zoomControl: false,
-              dragging: true,
-              touchZoom: true,
-              doubleClickZoom: true,
-              scrollWheelZoom: true,
-              boxZoom: true,
-              keyboard: true,
-              zoomAnimation: true,
-              fadeAnimation: true,
-              markerZoomAnimation: true
-            });
-
-            const tileLayer = L.tileLayer('http://localhost:5000/tiles/{z}/{x}/{y}.png', {
-              attribution: 'Map data © OpenStreetMap contributors',
-              maxZoom: 8,
-              minZoom: 6,
-              tileSize: 256,
-              zoomOffset: 0,
-              detectRetina: false,
-              bounds: [[44.0, 22.0], [56.0, 50.0]]
-            });
-
-            tileLayer.addTo(this.map);
-
-            tileLayer.on('tileerror', (e) => {
-              console.warn('Tile loading error, falling back to online tiles:', e);
-              // Fallback to online tiles if local tiles fail
-              const onlineTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: 'Map data © OpenStreetMap contributors',
-                maxZoom: 8,
-                minZoom: 6,
-              });
-              this.map.removeLayer(tileLayer);
-              onlineTileLayer.addTo(this.map);
-            });
-
-            this.canvasLayers = [];
-            this.fadeTimers = [];
-            
-            console.log('Map initialized with canvas layer system');
-          }
-          
-          createCanvasLayer(fires, timestamp) {
-            console.log(\`Creating full-map canvas overlay with \${fires.length} fires\`);
-            
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            
-            const mapSize = this.map.getSize();
-            canvas.width = mapSize.x;
-            canvas.height = mapSize.y;
-            
-            const bounds = this.map.getBounds();
-            
-            const offscreenCanvas = document.createElement('canvas');
-            offscreenCanvas.width = mapSize.x;
-            offscreenCanvas.height = mapSize.y;
-            const offscreenCtx = offscreenCanvas.getContext('2d');
-            
-            let drawnCount = 0;
-            
-            fires.forEach(fire => {
-              const point = this.map.latLngToContainerPoint([fire.latitude, fire.longitude]);
-              
-              if (point.x >= 0 && point.x <= mapSize.x && point.y >= 0 && point.y <= mapSize.y) {
-                let color;
-                switch(fire.confidence) {
-                  case 'high': color = '#e74c3c'; break;
-                  case 'medium': color = '#f39c12'; break;
-                  default: color = '#f1c40f'; break;
-                }
-                
-                const size = this.calculateFireSize(fire.frp || 0);
-                
-                offscreenCtx.beginPath();
-                offscreenCtx.arc(point.x, point.y, size, 0, 2 * Math.PI);
-                offscreenCtx.fillStyle = color;
-                offscreenCtx.fill();
-                drawnCount++;
-              }
-            });
-            
-            ctx.drawImage(offscreenCanvas, 0, 0);
-            console.log(\`Drew \${drawnCount} out of \${fires.length} fires on full canvas\`);
-            
-            const dataURL = canvas.toDataURL();
-            const imageOverlay = L.imageOverlay(dataURL, bounds, {
-              opacity: 1.0,
-              interactive: false,
-              pane: 'overlayPane'
-            });
-            
-            imageOverlay.addTo(this.map);
-            
-            const layerInfo = {
-              overlay: imageOverlay,
-              canvas: canvas,
-              fires: fires,
-              timestamp: timestamp,
-              fireCount: fires.length,
-              bounds: bounds
-            };
-            
-            this.canvasLayers.push(layerInfo);
-            this.startLayerFade(layerInfo);
-            
-            console.log(\`Created image overlay with \${fires.length} fires\`);
-            return layerInfo;
-          }
-          
-          startLayerFade(layerInfo) {
-            if (this.simulationEnded) {
-              console.log('Simulation ended - keeping layer visible without fade');
-              layerInfo.overlay.setOpacity(1.0);
-              return;
-            }
-            
-            const visibleDuration = 100;
-            const fadeDuration = 1700;
-            
-            layerInfo.overlay.setOpacity(1.0);
-            
-            const overlayElement = layerInfo.overlay.getElement();
-            if (overlayElement) {
-              overlayElement.style.transition = \`opacity \${fadeDuration}ms cubic-bezier(0.55, 0.055, 0.675, 0.19)\`;
-            }
-            
-            console.log(\`Layer with \${layerInfo.fireCount} fires: visible for \${visibleDuration}ms, then fade for \${fadeDuration}ms\`);
-            
-            setTimeout(() => {
-              console.log(\`Starting fade animation for layer with \${layerInfo.fireCount} fires\`);
-              layerInfo.overlay.setOpacity(0.0);
-            }, visibleDuration);
-            
-            const fadeTimer = setTimeout(() => {
-              console.log(\`Removing completely faded overlay with \${layerInfo.fireCount} fires\`);
-              
-              if (layerInfo.overlay && this.map.hasLayer(layerInfo.overlay)) {
-                this.map.removeLayer(layerInfo.overlay);
-              }
-              
-              const index = this.canvasLayers.indexOf(layerInfo);
-              if (index > -1) {
-                this.canvasLayers.splice(index, 1);
-                console.log(\`Overlay removed from array. \${this.canvasLayers.length} layers remaining\`);
-              }
-            }, visibleDuration + fadeDuration);
-            
-            this.fadeTimers.push(fadeTimer);
-          }
-          
-          calculateFireSize(frp) {
-            const zoom = this.map.getZoom();
-            const zoomScale = Math.pow(3.0, zoom - 6);
-            
-            const baseSize = 3 * zoomScale;
-            const maxSize = 18 * zoomScale;
-            
-            const frpContribution = (frp / 20) * zoomScale;
-            
-            return Math.min(maxSize, baseSize + frpContribution);
-          }
-
-          setupUIHandlers() {
-            const playBtn = document.getElementById('play-btn');
-            if (playBtn) {
-              playBtn.addEventListener('click', () => {
-                console.log('=== PLAY BUTTON CLICKED ===');
-                
-                this.socket.emit('stop_playback');
-                
-                this.simulationEnded = false;
-                this.playbackState = 'stopped';
-                this.clearAllLayers();
-                this.stopPulseTimer();
-                
-                this.updateStatus('Starting...');
-                
-                setTimeout(() => {
-                  this.startPlayback();
-                }, 100);
-              });
-            }
-
-            const pauseBtn = document.getElementById('pause-btn');
-            if (pauseBtn) {
-              pauseBtn.addEventListener('click', () => {
-                this.pausePlayback();
-              });
-            }
-
-            const stopBtn = document.getElementById('stop-btn');
-            if (stopBtn) {
-              stopBtn.addEventListener('click', () => {
-                this.stopPlayback();
-              });
-            }
-
-            const speedSlider = document.getElementById('speed-slider');
-            if (speedSlider) {
-              speedSlider.addEventListener('input', (e) => {
-                this.changeSpeed(e.target.value);
-              });
-            }
-
-            const startDate = document.getElementById('start-date');
-            const endDate = document.getElementById('end-date');
-            
-            if (startDate) startDate.addEventListener('change', () => this.validateDateRange());
-            if (endDate) endDate.addEventListener('change', () => this.validateDateRange());
-
-            this.setupControlPanelToggle();
-
-            const zoomIn = document.getElementById('zoom-in');
-            const zoomOut = document.getElementById('zoom-out');
-            
-            if (zoomIn) zoomIn.addEventListener('click', () => this.map.zoomIn());
-            if (zoomOut) zoomOut.addEventListener('click', () => this.map.zoomOut());
-          }
-
-          setupControlPanelToggle() {
-            const controlToggle = document.getElementById('control-toggle');
-            const controlPanel = document.getElementById('control-panel');
-
-            if (controlToggle && controlPanel) {
-              controlToggle.addEventListener('click', () => {
-                controlPanel.classList.toggle('hidden');
-              });
-            }
-          }
-
-          updateSpeedLabels() {
-            if (!this.config) return;
-            
-            const slider = document.getElementById('speed-slider');
-            const speedKeys = Object.keys(this.config.playback_speeds);
-            
-            const currentIndex = speedKeys.indexOf(this.config.default_speed);
-            if (currentIndex !== -1 && slider) {
-              slider.value = currentIndex;
-            }
-            
-            this.updateSpeedDisplay(this.config.default_speed);
-          }
-
-          updateSpeedDisplay(speedKey) {
-            if (!this.config) return;
-            
-            const label = document.getElementById('speed-label');
-            const displayLabel = this.config.speed_labels[speedKey] || speedKey;
-            if (label) label.textContent = displayLabel;
-          }
-
-          validateDateRange() {
-            const startDateValue = document.getElementById('start-date')?.value;
-            const endDateValue = document.getElementById('end-date')?.value;
-            
-            if (!startDateValue || !endDateValue) return false;
-            
-            const startDate = new Date(startDateValue);
-            const endDate = new Date(endDateValue);
-
-            if (startDate >= endDate) {
-              alert('Start date must be before end date');
-              return false;
-            }
-
-            return true;
-          }
-
-          startPlayback() {
-            if (!this.validateDateRange()) return;
-
-            const startDate = document.getElementById('start-date')?.value;
-            const endDate = document.getElementById('end-date')?.value;
-            const speedSlider = document.getElementById('speed-slider');
-            
-            if (!startDate || !endDate || !speedSlider) return;
-            
-            const speedKeys = ['slowest', 'slow', 'normal', 'fast', 'fastest'];
-            const speedKey = speedKeys[parseInt(speedSlider.value)] || 'slow';
-
-            console.log(\`📡 Starting playback: \${startDate} to \${endDate} at \${speedKey} speed\`);
-
-            this.showLoading();
-            this.updateStatus('Starting...');
-
-            this.socket.emit('start_playback', {
-              start_date: startDate,
-              end_date: endDate,
-              speed: speedKey
-            });
-          }
-
-          pausePlayback() {
-            if (this.playbackState === 'playing') {
-              this.socket.emit('pause_playback');
-            } else if (this.playbackState === 'paused') {
-              this.socket.emit('resume_playback');
-            }
-          }
-
-          stopPlayback() {
-            this.socket.emit('stop_playback');
-            this.playbackState = 'stopped';
-            this.stopPulseTimer();
-          }
-
-          changeSpeed(sliderValue) {
-            const speedKeys = ['slowest', 'slow', 'normal', 'fast', 'fastest'];
-            const speedKey = speedKeys[parseInt(sliderValue)] || 'slow';
-            
-            this.updateSpeedDisplay(speedKey);
-            
-            if (this.playbackState === 'playing') {
-              this.socket.emit('change_speed', { speed: speedKey });
-            }
-          }
-
-          handleFireUpdate(data) {
-            const { fires, timestamp, statistics } = data;
-            
-            this.currentSimulationTime = new Date(timestamp);
-            
-            const intervalData = {
-              timestamp: new Date(timestamp),
-              count: fires.length
-            };
-            this.fireEvents.push(intervalData);
-            
-            this.updateTimeDisplay(timestamp);
-            
-            const activeFires = this.calculateActiveFires();
-            
-            this.updateStatistics({
-              ...statistics,
-              active_fires: activeFires
-            });
-            
-            if (fires.length > 0) {
-              console.log(\`Creating canvas layer with \${fires.length} fires\`);
-              this.createCanvasLayer(fires, timestamp);
-            } else {
-              console.log('No fires in this interval, skipping canvas layer');
-            }
-          }
-
-          calculateActiveFires() {
-            if (this.fireEvents.length === 0) return 0;
-            
-            const latestInterval = this.fireEvents[this.fireEvents.length - 1];
-            const activeFires = latestInterval.count;
-            
-            if (this.fireEvents.length > 10) {
-              this.fireEvents = this.fireEvents.slice(-10);
-            }
-            
-            return activeFires;
-          }
-
-          clearAllMarkers() {
-            this.canvasLayers.forEach(layerInfo => {
-              if (layerInfo.element && layerInfo.element.parentNode) {
-                layerInfo.element.parentNode.removeChild(layerInfo.element);
-              }
-            });
-            this.canvasLayers = [];
-
-            this.fadeTimers.forEach(timer => clearTimeout(timer));
-            this.fadeTimers = [];
-            
-            this.fireHistory = [];
-            const bars = document.querySelectorAll('.fire-chart-bar');
-            bars.forEach(bar => {
-              bar.style.height = '2px';
-            });
-          }
-          
-          stopAllLayerFades() {
-            this.fadeTimers.forEach(timer => clearTimeout(timer));
-            this.fadeTimers = [];
-            
-            this.canvasLayers.forEach(layerInfo => {
-              if (layerInfo.overlay) {
-                layerInfo.overlay.setOpacity(1.0);
-                const overlayElement = layerInfo.overlay.getElement();
-                if (overlayElement) {
-                  overlayElement.style.transition = 'none';
-                }
-              }
-            });
-            
-            console.log(\`Stopped fading on \${this.canvasLayers.length} image overlay layers - all frozen at full opacity\`);
-          }
-          
-          clearAllLayers() {
-            console.log(\`🧹 CLEARING \${this.canvasLayers.length} canvas layers and \${this.fadeTimers.length} fade timers\`);
-            
-            this.canvasLayers.forEach((layerInfo, index) => {
-              if (layerInfo.overlay) {
-                if (this.map.hasLayer(layerInfo.overlay)) {
-                  this.map.removeLayer(layerInfo.overlay);
-                }
-                const element = layerInfo.overlay.getElement();
-                if (element && element.parentNode) {
-                  element.parentNode.removeChild(element);
-                }
-              }
-            });
-            
-            this.fadeTimers.forEach(timer => clearTimeout(timer));
-            this.fadeTimers = [];
-            this.canvasLayers = [];
-            
-            this.simulationEnded = false;
-            
-            console.log('All layers cleared and arrays reset');
-          }
-
-          startPulseTimer() {
-            this.stopPulseTimer();
-            
-            this.pulseTimer = setInterval(() => {
-              this.pulseIntervalIndicator();
-            }, 1000);
-          }
-          
-          stopPulseTimer() {
-            if (this.pulseTimer) {
-              clearInterval(this.pulseTimer);
-              this.pulseTimer = null;
-            }
-          }
-
-          pulseIntervalIndicator() {
-            const pulse = document.getElementById('interval-pulse');
-            if (pulse) {
-              pulse.classList.add('pulse');
-              
-              setTimeout(() => {
-                pulse.classList.remove('pulse');
-                pulse.style.transform = 'scale(1.0)';
-              }, 200);
-              
-              setTimeout(() => {
-                pulse.style.transform = 'scale(0.8)';
-              }, 800);
-            }
-          }
-
-          updateTimeDisplay(timestamp) {
-            const date = new Date(timestamp);
-            const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-            const display = \`\${monthNames[date.getMonth()]} \${date.getFullYear()}\`;
-            
-            const element1 = document.getElementById('current-time-1');
-            const element2 = document.getElementById('current-time-2');
-            
-            if (element2) element2.style.opacity = '0';
-            
-            if (element1 && element1.textContent !== display && element1.textContent !== '--') {
-              element1.textContent = display;
-              element1.classList.add('pop');
-              
-              setTimeout(() => {
-                element1.classList.remove('pop');
-              }, 100);
-            } else if (element1 && element1.textContent === '--') {
-              element1.textContent = display;
-            }
-          }
-
-          initializeFireChart() {
-            const chartBars = document.getElementById('fire-chart-bars');
-            if (chartBars) {
-              for (let i = 0; i < this.maxHistoryLength; i++) {
-                const bar = document.createElement('div');
-                bar.className = 'fire-chart-bar';
-                bar.style.height = '2px';
-                chartBars.appendChild(bar);
-              }
-            }
-          }
-
-          updateFireChart(currentFireCount) {
-            this.fireHistory.push(currentFireCount);
-            
-            if (this.fireHistory.length > this.maxHistoryLength) {
-              this.fireHistory.shift();
-            }
-            
-            const maxCount = Math.max(...this.fireHistory, 1);
-            
-            const bars = document.querySelectorAll('.fire-chart-bar');
-            this.fireHistory.forEach((count, index) => {
-              if (bars[index]) {
-                const height = Math.max(2, (count / maxCount) * 34);
-                bars[index].style.height = \`\${height}px\`;
-              }
-            });
-            
-            for (let i = this.fireHistory.length; i < bars.length; i++) {
-              bars[i].style.height = '2px';
-            }
-          }
-
-          updateStatistics(stats) {
-            const currentFireCount = stats.active_fires || 0;
-            const totalFires = stats.total_fires || 0;
-            
-            const activeFiresEl = document.getElementById('active-fires');
-            const totalFiresEl = document.getElementById('total-fires');
-            
-            if (activeFiresEl) activeFiresEl.textContent = String(currentFireCount);
-            if (totalFiresEl) totalFiresEl.textContent = String(totalFires);
-            
-            this.updateFireChart(currentFireCount);
-          }
-
-          updateStatus(status) {
-            const statusEl = document.getElementById('playback-status');
-            if (statusEl) statusEl.textContent = status;
-          }
-
-          updatePlaybackControls() {
-            const playBtn = document.getElementById('play-btn');
-            const pauseBtn = document.getElementById('pause-btn');
-            const stopBtn = document.getElementById('stop-btn');
-
-            switch (this.playbackState) {
-              case 'stopped':
-                if (playBtn) playBtn.disabled = false;
-                if (pauseBtn) {
-                  pauseBtn.disabled = true;
-                  pauseBtn.textContent = 'Pause';
-                }
-                if (stopBtn) stopBtn.disabled = true;
-                break;
-              case 'playing':
-                if (playBtn) playBtn.disabled = true;
-                if (pauseBtn) {
-                  pauseBtn.disabled = false;
-                  pauseBtn.textContent = 'Pause';
-                }
-                if (stopBtn) stopBtn.disabled = false;
-                break;
-              case 'paused':
-                if (playBtn) playBtn.disabled = true;
-                if (pauseBtn) {
-                  pauseBtn.disabled = false;
-                  pauseBtn.textContent = 'Resume';
-                }
-                if (stopBtn) stopBtn.disabled = false;
-                break;
-            }
-          }
-
-          resetToReadyState() {
-            console.log('Resetting to ready state');
-            
-            this.socket.emit('stop_playback');
-            
-            this.clearAllLayers();
-            this.stopPulseTimer();
-            
-            this.playbackState = 'stopped';
-            this.simulationEnded = false;
-            this.updateStatus('Ready');
-            
-            const playBtn = document.getElementById('play-btn');
-            const pauseBtn = document.getElementById('pause-btn');
-            const stopBtn = document.getElementById('stop-btn');
-            
-            if (playBtn) playBtn.disabled = false;
-            if (pauseBtn) {
-              pauseBtn.disabled = true;
-              pauseBtn.textContent = 'Pause';
-            }
-            if (stopBtn) stopBtn.disabled = true;
-            
-            const activeFiresEl = document.getElementById('active-fires');
-            const totalFiresEl = document.getElementById('total-fires');
-            const currentTime1 = document.getElementById('current-time-1');
-            const currentTime2 = document.getElementById('current-time-2');
-            
-            if (activeFiresEl) activeFiresEl.textContent = '0';
-            if (totalFiresEl) totalFiresEl.textContent = '0';
-            if (currentTime1) currentTime1.textContent = '--';
-            if (currentTime2) {
-              currentTime2.textContent = '--';
-              currentTime2.style.opacity = '0';
-            }
-          }
-
-          showLoading() {
-            const loading = document.getElementById('loading');
-            if (loading) loading.classList.add('show');
-          }
-
-          hideLoading() {
-            const loading = document.getElementById('loading');
-            if (loading) loading.classList.remove('show');
-          }
-        }
-
-        // Make FireTrackingApp available globally
-        window.FireTrackingApp = FireTrackingApp;
-        `
-      }} />
     </Box>
   );
 }

@@ -1,3 +1,4 @@
+set -e
 # Build multi-architecture Docker images
 echo "Building backend image..."
 docker buildx build \

@@ -164,7 +164,7 @@ class FireDataProducer:
             cursor.execute("""
                 SELECT COUNT(*) FROM fire_events 
                 WHERE datetime_utc >= ? AND datetime_utc <= ?
-            """, (self.start_date.isoformat(), self.end_date.isoformat()))
+            """, (self.start_date.strftime('%Y-%m-%d %H:%M:%S'), self.end_date.strftime('%Y-%m-%d %H:%M:%S')))
             self.total_records = cursor.fetchone()[0]
             conn.close()
             
@@ -173,6 +173,7 @@ class FireDataProducer:
             self.current_datetime = self.start_date
             last_interval_time = time.time()
             
+            logger.info(f"Starting producer loop from {self.current_datetime} to {self.end_date}")
             while self.is_running and self.current_datetime <= self.end_date:
                 current_time = time.time()
                 elapsed = current_time - last_interval_time
@@ -184,7 +185,9 @@ class FireDataProducer:
                     if next_datetime > self.end_date:
                         next_datetime = self.end_date
                     
+                    logger.debug(f"Processing interval: {self.current_datetime} to {next_datetime}")
                     records = self.query_interval(self.current_datetime, next_datetime)
+                    logger.debug(f"Found {len(records)} records in interval")
                     
                     batch_data = {
                         'type': 'fire_batch',
@@ -197,11 +200,15 @@ class FireDataProducer:
                         self.data_queue.put(batch_data)
                         if records:
                             self.processed_records += len(records)
+                            logger.info(f"Queued {len(records)} records, total processed: {self.processed_records}")
                     except Exception as e:
                         logger.warning(f"Failed to queue batch: {e}")
                     
                     self.current_datetime = next_datetime
                     last_interval_time = current_time
+                    
+                    # Add a small delay to prevent overwhelming the system
+                    time.sleep(0.1)
                 
                 time.sleep(0.01)
             
@@ -249,14 +256,16 @@ class FireDataConsumer:
             self.fire_statistics['current_time'] = batch_data['timestamp']
             self.fire_statistics['active_count'] = len(records)
             
-            self.socketio.emit('fire_update', {
+            emit_data = {
                 'fires': records,
                 'timestamp': batch_data['timestamp'],
                 'speed': batch_data['speed'],
                 'statistics': self.fire_statistics
-            })
+            }
             
-            logger.debug(f"Emitted {len(records)} fire records to clients")
+            # Emit to all connected clients
+            self.socketio.emit('fire_update', emit_data, namespace='/')
+            
     
     def run_consumer(self):
         """Main consumer loop."""
@@ -267,13 +276,17 @@ class FireDataConsumer:
             while self.is_running:
                 try:
                     data = self.data_queue.get(timeout=1.0)
+                    logger.info(f"Consumer received data: {data['type']}")
                     
                     if data['type'] == 'end_of_data':
                         logger.info("Received end of data signal")
                         self.socketio.emit('playback_ended')
                         break
                     elif data['type'] == 'fire_batch':
+                        logger.info(f"Consumer processing fire batch with {len(data['records'])} records")
                         self.emit_fire_update(data)
+                    else:
+                        logger.warning(f"Unknown data type: {data['type']}")
                     
                     self.data_queue.task_done()
                     
@@ -449,9 +462,11 @@ if socketio:
     def handle_connect():
         """Handle client connection."""
         logger.info(f"Client connected: {request.sid}")
+        logger.info(f"Client IP: {request.remote_addr}")
+        logger.info(f"Client User-Agent: {request.headers.get('User-Agent', 'Unknown')}")
         
         if fire_config:
-            emit('config', {
+            config_data = {
                 'zoom_levels': fire_config.ZOOM_LEVELS,
                 'default_zoom': fire_config.DEFAULT_ZOOM,
                 'map_center': fire_config.MAP_CENTER,
@@ -460,7 +475,9 @@ if socketio:
                 'speed_labels': fire_config.SPEED_LABELS,
                 'default_speed': fire_config.DEFAULT_SPEED,
                 'default_date_range': fire_config.DEFAULT_DATE_RANGE
-            })
+            }
+            logger.info(f"Emitting config to client {request.sid}: {config_data}")
+            emit('config', config_data)
 
     @socketio.on('disconnect')
     def handle_disconnect():
@@ -604,21 +621,20 @@ def main():
         logger.info("Fire tracking system disabled - running in basic mode")
     
     # Start the application
-    logger.info("Starting server on 0.0.0.0:5000")
+    logger.info("Starting server on 0.0.0.0:5001")
     
     try:
         if socketio and fire_available:
             socketio.run(
                 app,
                 host='0.0.0.0',
-                port=5000,
+                port=5001,
                 debug=False,
-                allow_unsafe_werkzeug=True
             )
         else:
             app.run(
                 host='0.0.0.0',
-                port=5000,
+                port=5001,
                 debug=True
             )
     except KeyboardInterrupt:

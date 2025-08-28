@@ -10,7 +10,7 @@ ENV/
 .venv
 *.egg-info/
 dist/
-build/
+#build/
 
 # Flask
 instance/

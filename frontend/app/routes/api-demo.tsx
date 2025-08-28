@@ -29,7 +29,7 @@ import ApiIcon from '@mui/icons-material/Api';
 import MemoryIcon from '@mui/icons-material/Memory';
 import SignalCellularAltIcon from '@mui/icons-material/SignalCellularAlt';
 
-const API_BASE = "http://localhost:5000/api";
+const API_BASE = "http://localhost:5001/api";
 
 export default function ApiDemo() {
   const theme = useTheme();
@@ -446,7 +446,7 @@ export default function ApiDemo() {
                 animationDelay: '1s',
               }} />
               <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
-                PORT: 5000
+                PORT: 5001  
               </Typography>
             </Stack>
           </Stack>
