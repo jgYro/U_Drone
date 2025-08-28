@@ -1,0 +1,17 @@
+apiVersion: uds.dev/v1alpha1
+kind: Package
+metadata:
+  name: hackathon
+  namespace: hackathon
+spec:
+  network:
+    serviceMesh:
+      mode: ambient
+    expose:
+      - service: hackathon
+        selector:
+          app.kubernetes.io/name: hackathon
+        gateway: tenant
+        host: hackathon
+        port: 80
+   

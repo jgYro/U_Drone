@@ -383,6 +383,43 @@ def status():
     return jsonify(status_data)
 
 
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for Docker and load balancers."""
+    try:
+        # Basic health check - app is responding
+        health_status = {
+            'status': 'healthy',
+            'timestamp': datetime.now().isoformat(),
+            'service': 'U_Drone Flask Backend'
+        }
+        
+        # Check database connectivity if fire tracking is enabled
+        if fire_config and os.path.exists(db_path):
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+                conn.close()
+                health_status['database'] = 'healthy'
+            except Exception as e:
+                health_status['database'] = 'unhealthy'
+                health_status['database_error'] = str(e)
+                health_status['status'] = 'degraded'
+        else:
+            health_status['database'] = 'not_configured'
+        
+        return jsonify(health_status), 200 if health_status['status'] == 'healthy' else 503
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+
 # ========== FIRE TRACKING ROUTES ==========
 
 if fire_config:

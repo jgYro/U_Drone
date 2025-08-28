@@ -50,3 +50,6 @@ Thumbs.db
 .env.development.local
 .env.test.local
 .env.production.local
+
+zarf-package-hackathon-amd64-1.0.0.tar.zst
+zarf-package-hackathon-arm64-1.0.0.tar.zst

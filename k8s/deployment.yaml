@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hackathon
+  namespace: hackathon
+  labels:
+    app.kubernetes.io/name: hackathon
+    app.kubernetes.io/version: latest
+    environment: production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hackathon
+  template:
+    metadata:
+      labels:
+        app: hackathon
+        app.kubernetes.io/name: hackathon
+    spec:
+      containers:
+        # Flask Backend Container
+        - name: backend
+          image: localhost:5000/hackathon-backend:latest
+          ports:
+            - name: backend
+              containerPort: 5000
+
+        # React Frontend Container (Nginx)
+        - name: frontend
+          image: localhost:5000/hackathon-frontend:latest
+          ports:
+            - name: http
+              containerPort: 80
+

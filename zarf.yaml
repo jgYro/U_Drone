@@ -1,0 +1,26 @@
+kind: ZarfPackageConfig
+metadata:
+  name: hackathon
+  description: "Containerized Ship Enterprise Application (C-SEA) - Single Pod Deployment"
+  version: "1.0.0"
+
+components:
+  - name: hackathon-namespace
+    required: true
+    manifests:
+      - name: namespace
+        files:
+          - ./k8s/namespace.yaml  
+
+  - name: hackathon
+    required: true
+    manifests:
+      - name: hackathon-manifests
+        namespace: hackathon
+        files:
+          - ./k8s/deployment.yaml
+          - ./k8s/service.yaml
+          - ./k8s/package.yaml
+    images:
+      - localhost:5000/hackathon-backend:latest
+      - localhost:5000/hackathon-frontend:latest
