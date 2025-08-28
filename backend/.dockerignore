@@ -43,11 +43,6 @@ Thumbs.db
 *.log
 logs/
 
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
 # Git
 .git/
 .gitignore

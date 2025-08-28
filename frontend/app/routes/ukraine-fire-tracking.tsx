@@ -105,6 +105,13 @@ export default function UkraineFireTracking() {
               this.fireEvents = [];
               this.currentSimulationTime = null;
               
+              // Reset fire chart history and clear the chart
+              this.fireHistory = [];
+              this.initializeFireChart();
+              
+              // Clear current fires
+              this.currentFires = [];
+              
               this.startPulseTimer();
               
               const activeFiresEl = document.getElementById('active-fires');
@@ -138,6 +145,12 @@ export default function UkraineFireTracking() {
               this.updatePlaybackControls();
               this.updateStatus('Ready');
               this.hideLoading();
+            });
+
+            this.socket.on('speed_changed', (data) => {
+              console.log('⚡ RECEIVED speed_changed event:', data);
+              this.currentSpeed = data.speed;
+              this.updateSpeedDisplay(data.speed);
             });
           }
 
@@ -175,19 +188,32 @@ export default function UkraineFireTracking() {
                 this.stopPlayback();
               });
             }
+
+            // Add speed slider handler
+            const speedSlider = document.getElementById('speed-slider');
+            if (speedSlider) {
+              speedSlider.addEventListener('input', (e) => {
+                this.changeSpeed(e.target.value);
+              });
+            }
           }
 
           startPlayback() {
             const startDate = document.getElementById('start-date')?.value;
             const endDate = document.getElementById('end-date')?.value;
+            const speedSlider = document.getElementById('speed-slider');
             
             if (!startDate || !endDate) return;
-
-            console.log('📡 Starting playback:', startDate, 'to', endDate);
+            
+            // Get speed from slider
+            const speedKeys = ['slowest', 'slow', 'normal', 'fast', 'fastest'];
+            const speedKey = speedKeys[parseInt(speedSlider?.value || '1')] || 'normal';
+            
+            console.log('📡 Starting playback:', startDate, 'to', endDate, 'at speed:', speedKey);
             this.socket.emit('start_playback', {
               start_date: startDate,
               end_date: endDate,
-              speed: 'normal'
+              speed: speedKey
             });
           }
 
@@ -195,7 +221,87 @@ export default function UkraineFireTracking() {
             this.socket.emit('stop_playback');
           }
 
+          changeSpeed(sliderValue) {
+            const speedKeys = ['slowest', 'slow', 'normal', 'fast', 'fastest'];
+            const speedKey = speedKeys[parseInt(sliderValue)] || 'normal';
+            
+            console.log('🎚️ Changing speed to:', speedKey);
+            
+            // Update speed label
+            const speedLabel = document.getElementById('speed-label');
+            if (speedLabel) {
+              const speedLabels = {
+                'slowest': '0.5 day/sec',
+                'slow': '1 day/sec', 
+                'normal': '2 days/sec',
+                'fast': '5 days/sec',
+                'fastest': '10 days/sec'
+              };
+              speedLabel.textContent = speedLabels[speedKey] || speedKey;
+            }
+            
+            // Update current speed
+            this.currentSpeed = speedKey;
+            
+            // Adjust fade durations for existing layers based on new speed
+            this.adjustLayerFadeDurations(speedKey);
+            
+            // Send speed change to backend if playing
+            if (this.playbackState === 'playing') {
+              this.socket.emit('change_speed', { speed: speedKey });
+            }
+          }
+
+          updateSpeedDisplay(speedKey) {
+            const speedLabel = document.getElementById('speed-label');
+            if (speedLabel) {
+              const speedLabels = {
+                'slowest': '0.5 day/sec',
+                'slow': '1 day/sec', 
+                'normal': '2 days/sec',
+                'fast': '5 days/sec',
+                'fastest': '10 days/sec'
+              };
+              speedLabel.textContent = speedLabels[speedKey] || speedKey;
+            }
+            
+            // Update slider position
+            const speedSlider = document.getElementById('speed-slider');
+            if (speedSlider) {
+              const speedKeys = ['slowest', 'slow', 'normal', 'fast', 'fastest'];
+              const index = speedKeys.indexOf(speedKey);
+              if (index !== -1) {
+                speedSlider.value = index;
+              }
+            }
+          }
+
+          adjustLayerFadeDurations(newSpeed) {
+            // Speed durations for reference
+            const speedDurations = {
+              'slowest': 6000,   // 6 seconds
+              'slow': 4000,      // 4 seconds  
+              'normal': 3000,    // 3 seconds
+              'fast': 2000,      // 2 seconds
+              'fastest': 1500    // 1.5 seconds
+            };
+            
+            const newDuration = speedDurations[newSpeed] || 3000;
+            
+            // For existing layers, we can't easily change their fade duration
+            // But we can log the change for debugging
+            
+            // Optionally, we could restart fades for existing layers
+            // but that might be jarring, so we'll let them continue with their original timing
+          }
+
           handleFireUpdate(data) {
+            // Only process fire updates when playback is active
+            if (this.playbackState !== 'playing') {
+              console.log('Ignoring fire update - playback not active');
+              return;
+            }
+            
             const { fires, timestamp, statistics } = data;
             console.log('Handling fire update:', fires.length, 'fires');
             
@@ -205,16 +311,29 @@ export default function UkraineFireTracking() {
             // Update the time display
             this.updateTimeDisplay(timestamp);
             
-            if (fires.length > 0) {
-              this.createCanvasLayer(fires, timestamp);
+            // Update the fire activity chart
+            this.updateFireChart(fires.length);
+            
+            // Only create canvas layer if there are fires and we're not overwhelmed
+            if (fires.length > 0 && this.canvasLayers.length < 6) {
+              // Use throttled rendering to prevent overwhelming the system
+              if (!this._renderThrottle) {
+                this._renderThrottle = true;
+                requestAnimationFrame(() => {
+                  this.createCanvasLayer(fires, timestamp);
+                  this._renderThrottle = false;
+                });
+              }
+            } else if (fires.length === 0) {
+              console.log('No fires in this interval, skipping canvas layer');
             }
             
             this.updateStatistics(statistics);
           }
 
           createCanvasLayer(fires, timestamp) {
-            // Performance: Limit active layers
-            if (this.canvasLayers.length > 5) {
+            // Performance: Allow more layers for smoother overlap effect
+            if (this.canvasLayers.length > 6) {
               const oldLayer = this.canvasLayers.shift();
               if (oldLayer && this.map.hasLayer(oldLayer)) {
                 this.map.removeLayer(oldLayer);
@@ -230,32 +349,39 @@ export default function UkraineFireTracking() {
             
             const bounds = this.map.getBounds();
             
-            // Optimize: Set context properties once
+            // Optimize canvas context for better performance
+            ctx.imageSmoothingEnabled = false; // Disable anti-aliasing for better performance
             ctx.lineWidth = 1;
             
+            // Pre-calculate colors and use object for faster lookups
+            const colors = {
+              high: '#e74c3c',
+              medium: '#f39c12',
+              low: '#f1c40f'
+            };
+            
+            // Batch all drawing operations for maximum performance
+            ctx.save();
+            
+            // Draw all fires in optimized batches
             fires.forEach(fire => {
               const point = this.map.latLngToContainerPoint([fire.latitude, fire.longitude]);
               if (point.x >= 0 && point.x <= mapSize.x && point.y >= 0 && point.y <= mapSize.y) {
-                // Determine fire color based on confidence
-                let color;
-                switch(fire.confidence) {
-                  case 'high': color = '#e74c3c'; break;
-                  case 'medium': color = '#f39c12'; break;
-                  default: color = '#f1c40f'; break;
-                }
-                
-                // Calculate fire size based on FRP (Fire Radiative Power)
+                const color = colors[fire.confidence] || colors.low;
                 const size = this.calculateFireSize(fire.frp || 0);
                 
-                // Draw simple fire dot (no glow effects for performance)
-                ctx.beginPath();
-                ctx.arc(point.x, point.y, size, 0, 2 * Math.PI);
+                // Use more efficient drawing
                 ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(Math.round(point.x), Math.round(point.y), size, 0, 2 * Math.PI);
                 ctx.fill();
               }
             });
             
-            const dataURL = canvas.toDataURL();
+            ctx.restore();
+            
+            // Use more efficient image creation
+            const dataURL = canvas.toDataURL('image/png', 0.9); // Slightly lower quality for better performance
             const imageOverlay = L.imageOverlay(dataURL, bounds, {
               opacity: 1.0,
               interactive: false
@@ -264,7 +390,7 @@ export default function UkraineFireTracking() {
             imageOverlay.addTo(this.map);
             this.canvasLayers.push(imageOverlay);
             
-            // Simple fade animation
+            // Start optimized fade animation
             this.startLayerFade(imageOverlay);
           }
 
@@ -295,18 +421,31 @@ export default function UkraineFireTracking() {
 
           startPulseTimer() {
             this.stopPulseTimer();
-            this.pulseTimer = setInterval(() => {
-              const pulse = document.getElementById('interval-pulse');
-              if (pulse) {
-                pulse.classList.add('pulse');
-                setTimeout(() => pulse.classList.remove('pulse'), 200);
+            
+            let lastTime = 0;
+            const pulseInterval = 1000; // 1 second
+            
+            const animate = (currentTime) => {
+              if (currentTime - lastTime >= pulseInterval) {
+                const pulse = document.getElementById('interval-pulse');
+                if (pulse) {
+                  pulse.classList.add('pulse');
+                  setTimeout(() => pulse.classList.remove('pulse'), 200);
+                }
+                lastTime = currentTime;
               }
-            }, 1000);
+              
+              if (this.playbackState === 'playing') {
+                this.pulseTimer = requestAnimationFrame(animate);
+              }
+            };
+            
+            this.pulseTimer = requestAnimationFrame(animate);
           }
           
           stopPulseTimer() {
             if (this.pulseTimer) {
-              clearInterval(this.pulseTimer);
+              cancelAnimationFrame(this.pulseTimer);
               this.pulseTimer = null;
             }
           }
@@ -332,33 +471,73 @@ export default function UkraineFireTracking() {
 
           calculateFireSize(frp) {
             const zoom = this.map.getZoom();
-            // Simpler zoom scaling
-            const zoomScale = Math.max(0.8, Math.min(2.0, (zoom - 6) * 0.3 + 1));
+            // Cache zoom calculations for better performance
+            if (!this._zoomCache) {
+              this._zoomCache = new Map();
+            }
             
-            // Base size with simple FRP scaling
+            let zoomScale = this._zoomCache.get(zoom);
+            if (zoomScale === undefined) {
+              // Use more efficient math operations
+              zoomScale = Math.max(0.8, Math.min(2.0, (zoom - 6) * 0.3 + 1));
+              this._zoomCache.set(zoom, zoomScale);
+            }
+            
+            // Simplified FRP calculation with integer math
             const baseSize = 3;
-            const frpSize = Math.min(8, frp / 10);
+            const frpSize = Math.min(6, (frp / 15) | 0); // Use bitwise OR for faster integer conversion
             
-            return Math.round((baseSize + frpSize) * zoomScale);
+            return (baseSize + frpSize) * zoomScale | 0; // Use bitwise OR for faster rounding
           }
 
           startLayerFade(layer) {
-            // Fast, simple fade animation
-            setTimeout(() => {
-              if (layer && this.map.hasLayer(layer)) {
-                layer.setOpacity(0.5);
-              }
-            }, 300);
+            // Calculate fade duration based on playback speed for normalized effect
+            const speedDurations = {
+              'slowest': 3000,   // 3 seconds for very slow playback
+              'slow': 2000,      // 2 seconds for slow playback  
+              'normal': 1500,    // 1.5 seconds for normal playback
+              'fast': 1000,      // 1 second for fast playback
+              'fastest': 800     // 0.8 seconds for fastest playback
+            };
             
-            setTimeout(() => {
-              if (layer && this.map.hasLayer(layer)) {
-                this.map.removeLayer(layer);
-                const index = this.canvasLayers.indexOf(layer);
-                if (index > -1) {
-                  this.canvasLayers.splice(index, 1);
+            const duration = speedDurations[this.currentSpeed] || 1500;
+            
+            // Use more efficient animation with fewer frames for better performance
+            let startTime = null;
+            const frameInterval = 16; // Target ~60fps (16ms per frame)
+            let lastFrameTime = 0;
+            
+            const animate = (currentTime) => {
+              if (!startTime) startTime = currentTime;
+              const elapsed = currentTime - startTime;
+              const progress = Math.min(elapsed / duration, 1);
+              
+              // Only update every 16ms for smoother performance
+              if (currentTime - lastFrameTime >= frameInterval) {
+                if (layer && this.map.hasLayer(layer)) {
+                  // Use easing function for smoother animation
+                  const easeProgress = 1 - Math.pow(1 - progress, 2); // Ease-out
+                  const opacity = 1 - (easeProgress * 0.8);
+                  layer.setOpacity(opacity);
+                  lastFrameTime = currentTime;
                 }
               }
-            }, 800);
+              
+              if (progress < 1) {
+                requestAnimationFrame(animate);
+              } else {
+                // Remove layer after fade completes
+                if (layer && this.map.hasLayer(layer)) {
+                  this.map.removeLayer(layer);
+                  const index = this.canvasLayers.indexOf(layer);
+                  if (index > -1) {
+                    this.canvasLayers.splice(index, 1);
+                  }
+                }
+              }
+            };
+            
+            requestAnimationFrame(animate);
           }
 
           updateTimeDisplay(timestamp) {
@@ -390,11 +569,63 @@ export default function UkraineFireTracking() {
           initializeFireChart() {
             const chartBars = document.getElementById('fire-chart-bars');
             if (chartBars) {
+              // Clear existing bars
+              chartBars.innerHTML = '';
+              
+              // Create bars with proper initial state
               for (let i = 0; i < this.maxHistoryLength; i++) {
                 const bar = document.createElement('div');
                 bar.className = 'fire-chart-bar';
                 bar.style.height = '2px';
+                bar.style.background = 'rgba(52, 152, 219, 0.3)'; // Default inactive color
+                bar.style.transition = 'all 0.3s ease';
                 chartBars.appendChild(bar);
+              }
+            }
+            
+            // Reset fire history
+            this.fireHistory = [];
+          }
+
+          updateFireChart(fireCount) {
+            const chartBars = document.getElementById('fire-chart-bars');
+            if (!chartBars) return;
+            
+            // Add new fire count to history
+            this.fireHistory.push(fireCount);
+            
+            // Keep only the last maxHistoryLength items
+            if (this.fireHistory.length > this.maxHistoryLength) {
+              this.fireHistory.shift();
+            }
+            
+            // Update chart bars
+            const bars = chartBars.children;
+            const maxFires = Math.max(...this.fireHistory, 1); // Avoid division by zero
+            
+            for (let i = 0; i < bars.length; i++) {
+              const bar = bars[i];
+              const fireCount = this.fireHistory[i] || 0;
+              
+              if (fireCount > 0) {
+                // Calculate height based on fire count relative to max
+                const heightPercent = (fireCount / maxFires) * 100;
+                const height = Math.max(2, heightPercent); // Minimum 2px height
+                
+                bar.style.height = height + '%';
+                
+                // Color based on fire intensity
+                if (heightPercent > 80) {
+                  bar.style.background = 'linear-gradient(to top, #e74c3c 0%, #f39c12 50%, #f1c40f 100%)';
+                } else if (heightPercent > 50) {
+                  bar.style.background = 'linear-gradient(to top, #f39c12 0%, #f1c40f 100%)';
+                } else {
+                  bar.style.background = 'linear-gradient(to top, #f1c40f 0%, #85c1e9 100%)';
+                }
+              } else {
+                // No fires - show as inactive
+                bar.style.height = '2px';
+                bar.style.background = 'rgba(52, 152, 219, 0.3)';
               }
             }
           }
@@ -673,13 +904,15 @@ export default function UkraineFireTracking() {
 
         .fire-chart-bar {
           flex: 1;
-          background: linear-gradient(to top, 
-            #e74c3c 0%, 
-            #f39c12 50%, 
-            #f1c40f 100%);
+          background: rgba(52, 152, 219, 0.3);
           border-radius: 1px;
           min-height: 2px;
-          transition: height 0.3s ease;
+          transition: all 0.3s ease;
+          position: relative;
+        }
+
+        .fire-chart-bar:hover {
+          opacity: 0.8;
         }
 
         .fire-chart-label {

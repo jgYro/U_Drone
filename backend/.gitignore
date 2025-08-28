@@ -32,13 +32,11 @@ instance/
 .webassets-cache
 
 # Database files
-*.db
 *.sqlite
 *.sqlite3
 
 # Map tiles (large files)
-map_tiles/
-tiles/
+
 
 # Logs
 *.log
