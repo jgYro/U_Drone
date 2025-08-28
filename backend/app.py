@@ -25,6 +25,12 @@ except ImportError:
     print("Warning: Fire tracking config not found. Fire tracking features will be disabled.")
     fire_config = None
 
+try:
+    from fire_tracking_service import fire_tracking_bp
+except ImportError:
+    print("Warning: Fire tracking service not found. SVM predictions will be disabled.")
+    fire_tracking_bp = None
+
 
 # Configure logging
 logging.basicConfig(
@@ -317,6 +323,10 @@ class FireDataConsumer:
 # Initialize Flask application
 app = Flask(__name__)
 CORS(app)
+
+# Register fire tracking blueprint if available
+if fire_tracking_bp:
+    app.register_blueprint(fire_tracking_bp)
 
 # Initialize SocketIO for fire tracking
 if fire_config:
