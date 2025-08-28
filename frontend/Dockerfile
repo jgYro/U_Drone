@@ -40,9 +40,9 @@ RUN mkdir -p /var/cache/nginx/client_temp \
     chmod -R 755 /var/cache/nginx
 
 # Create nginx.pid file in /tmp where nginx user has access
-RUN touch /tmp/nginx.pid && \
-    chown nginx:nginx /tmp/nginx.pid && \
-    chmod 644 /tmp/nginx.pid
+RUN touch /var/run/nginx.pid && \
+    chown nginx:nginx /var/run/nginx.pid && \
+    chmod 755 /var/run/nginx.pid
 
 # Switch to nginx user
 USER nginx
