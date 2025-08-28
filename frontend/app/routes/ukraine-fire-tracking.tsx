@@ -1000,24 +1000,22 @@ export default function UkraineFireTracking() {
             
             {/* Original Fire Tracking Controls and Styles */}
             <style>{`
-              /* Control Panel - Slideable from left */
+              /* Control Panel - Horizontal strip at bottom */
               .control-panel {
                 position: absolute;
-                top: 20px;
-                left: 20px;
-                z-index: 1000;
+                bottom: 20px;
+                left: 10px;
+                right: 10px;
+                z-index: 999;
                 background: rgba(44, 62, 80, 0.95);
-                border-radius: 0 10px 10px 0;
-                padding: 20px;
+                border-radius: 8px;
+                padding: 10px 20px;
                 box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-                min-width: 350px;
-                max-height: calc(100vh - 40px);
-                overflow-y: auto;
-                transition: left 0.3s ease;
-              }
-
-              .control-panel.hidden {
-                left: -370px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 30px;
+                flex-wrap: wrap;
               }
 
               .control-panel h2 {
@@ -1091,14 +1089,13 @@ export default function UkraineFireTracking() {
               }
 
               .btn {
-                padding: 10px 16px;
+                padding: 6px 12px;
                 border: none;
-                border-radius: 5px;
+                border-radius: 4px;
                 cursor: pointer;
-                font-size: 14px;
+                font-size: 12px;
                 font-weight: 500;
                 transition: all 0.2s;
-                flex: 1;
               }
 
               .btn-primary {
@@ -1185,7 +1182,7 @@ export default function UkraineFireTracking() {
                 color: #2980b9;
               }
 
-              /* Time Display Overlay */
+              /* Time Display Overlay - Positioned at top center */
               .time-overlay {
                 position: absolute;
                 top: 20px;
@@ -1196,8 +1193,11 @@ export default function UkraineFireTracking() {
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                width: 200px;
-                height: 40px;
+                background: rgba(44, 62, 80, 0.95);
+                padding: 10px 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+                min-width: 200px;
               }
 
               .current-time {
@@ -1206,7 +1206,7 @@ export default function UkraineFireTracking() {
                 justify-content: center;
                 width: 100%;
                 height: 100%;
-                font-size: 1.5em;
+                font-size: 1.2em;
                 font-weight: bold;
                 color: #3498db;
                 text-align: center;
@@ -1234,8 +1234,7 @@ export default function UkraineFireTracking() {
               }
             `}</style>
 
-            {/* Control Panel Toggle Button */}
-            <button className="control-toggle" id="control-toggle">🎛️</button>
+            {/* Control Panel Toggle Button - Removed to avoid covering zoom controls */}
 
             {/* Control Panel */}
             <div className="control-panel" id="control-panel">
@@ -1290,6 +1289,7 @@ export default function UkraineFireTracking() {
             {/* Time Display Overlay */}
             <div className="time-overlay">
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ color: '#bdc3c7', fontSize: '0.9em' }}>Current Date:</span>
                 <div className="current-time" id="current-time-1">--</div>
               </div>
             </div>
@@ -1791,13 +1791,7 @@ export default function UkraineFireTracking() {
               });
             }
 
-            const controlToggle = document.getElementById('control-toggle');
-            const controlPanel = document.getElementById('control-panel');
-            if (controlToggle && controlPanel) {
-              controlToggle.addEventListener('click', () => {
-                controlPanel.classList.toggle('hidden');
-              });
-            }
+            // Toggle button removed - control panel is always visible
           }
 
           updateSpeedLabels() {
