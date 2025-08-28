@@ -1236,8 +1236,9 @@ export default function UkraineFireTracking() {
 
             {/* Control Panel Toggle Button - Removed to avoid covering zoom controls */}
 
-            {/* Control Panel */}
-            <div className="control-panel" id="control-panel">
+            {/* Control Panel - Only show on map tab */}
+            {activeTab === 'map' && (
+              <div className="control-panel" id="control-panel">
               <h2>🔥 Fire Tracking Control</h2>
               
               {/* Date Range Selection */}
@@ -1285,14 +1286,17 @@ export default function UkraineFireTracking() {
                 </div>
               </div>
             </div>
+            )}
 
-            {/* Time Display Overlay */}
-            <div className="time-overlay">
+            {/* Time Display Overlay - Only show on map tab */}
+            {activeTab === 'map' && (
+              <div className="time-overlay">
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <span style={{ color: '#bdc3c7', fontSize: '0.9em' }}>Current Date:</span>
                 <div className="current-time" id="current-time-1">--</div>
               </div>
             </div>
+            )}
 
             {/* Loading Indicator */}
             <div className="loading" id="loading">

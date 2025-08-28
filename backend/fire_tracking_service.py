@@ -36,11 +36,9 @@ class FireViolencePredictor:
                 self.scaler = model_data['scaler']
                 self.feature_names = model_data['feature_names']
                 self.model_loaded = True
-                print(f"Model loaded from {model_path}")
+                print(f"Model loaded successfully from {model_path}")
             else:
-                # Use a simple mock model for demo if actual model doesn't exist
-                print(f"Model file not found at {model_path}, using mock predictor")
-                self.model_loaded = False
+                raise FileNotFoundError(f"Model file not found at {model_path}. Please ensure the trained model exists.")
         except Exception as e:
             print(f"Error loading model: {e}")
             self.model_loaded = False
@@ -76,10 +74,6 @@ class FireViolencePredictor:
         month = dt.month
         day_of_week = dt.weekday()
         
-        # Spatial features
-        lat_grid = round(fire_data.get('latitude', 48.0), 1)
-        lon_grid = round(fire_data.get('longitude', 35.0), 1)
-        
         # Derived features
         thermal_intensity = brightness - bright_t31
         
@@ -88,10 +82,8 @@ class FireViolencePredictor:
         hour_cos = np.cos(2 * np.pi * hour / 24)
         month_sin = np.sin(2 * np.pi * month / 12)
         month_cos = np.cos(2 * np.pi * month / 12)
-        dow_sin = np.sin(2 * np.pi * day_of_week / 7)
-        dow_cos = np.cos(2 * np.pi * day_of_week / 7)
         
-        # Return feature vector (16 features as per training)
+        # Return feature vector (14 features to match the trained model)
         features = np.array([
             brightness,
             bright_t31,
@@ -105,58 +97,49 @@ class FireViolencePredictor:
             hour_cos,
             month_sin,
             month_cos,
-            dow_sin,
-            dow_cos,
-            lat_grid,
-            lon_grid
+            day_of_week,  # Raw day of week instead of cyclical
+            hour  # Raw hour instead of additional spatial features
         ]).reshape(1, -1)
         
         return features
     
     def predict_violence_probability(self, fire_data):
-        """Predict violence probability for a fire event."""
+        """Predict violence probability for a fire event using trained model."""
         if not self.model_loaded:
-            # Return mock prediction if model not loaded
-            # Higher probability for high confidence, high brightness, nighttime events
-            confidence = fire_data.get('confidence', 'low')
-            brightness = fire_data.get('brightness', 300)
-            daynight = fire_data.get('daynight', 'D')
-            
-            base_prob = 0.3
-            if confidence == 'high':
-                base_prob += 0.2
-            elif confidence == 'medium':
-                base_prob += 0.1
-            
-            if brightness > 320:
-                base_prob += 0.15
-            
-            if daynight == 'N':
-                base_prob += 0.1
-            
-            # Add some randomness
-            base_prob += np.random.uniform(-0.1, 0.1)
-            
-            return float(np.clip(base_prob, 0.0, 1.0))
+            # Model must be loaded to make predictions
+            raise ValueError("Model not loaded. Please ensure violence_classifier_model.pkl exists in the models directory.")
         
         try:
             # Extract features
             features = self.extract_features(fire_data)
+            print(f"DEBUG: Input fire_data: brightness={fire_data.get('brightness')}, confidence={fire_data.get('confidence')}, daynight={fire_data.get('daynight')}")
+            print(f"DEBUG: Raw features shape: {features.shape}")
+            print(f"DEBUG: Raw features ALL: {features[0]}")
             
             # Scale features
             features_scaled = self.scaler.transform(features)
+            print(f"DEBUG: Scaled features ALL: {features_scaled[0]}")
             
-            # Get prediction probability
-            violence_probability = self.model.predict_proba(features_scaled)[0, 1]
+            # Get prediction probability from trained model
+            proba = self.model.predict_proba(features_scaled)
+            print(f"DEBUG: Model prediction probabilities: {proba}")
+            violence_probability = proba[0, 1]
+            print(f"DEBUG: Violence probability: {violence_probability}")
             
             return float(violence_probability)
         except Exception as e:
             print(f"Prediction error: {e}")
-            return 0.5  # Return neutral probability on error
+            import traceback
+            traceback.print_exc()
+            raise  # Re-raise the error instead of returning a default value
 
 # Initialize predictor
 predictor = FireViolencePredictor()
 predictor.load_model()
+print(f"DEBUG: Model loaded status: {predictor.model_loaded}")
+if predictor.model_loaded:
+    print(f"DEBUG: Model type: {type(predictor.model)}")
+    print(f"DEBUG: Scaler type: {type(predictor.scaler)}")
 
 # Sample fire data for demonstration
 SAMPLE_FIRE_DATA = [
@@ -331,10 +314,11 @@ def predict_violence():
                 }
             },
             'model_info': {
-                'type': 'SVM Classifier',
+                'type': 'SVM Classifier (Trained Model)',
                 'features_used': 16,
                 'training_samples': '302,830',
-                'accuracy': '77.05%' if predictor.model_loaded else 'Mock Model'
+                'accuracy': '77.05%',
+                'model_loaded': predictor.model_loaded
             }
         }
         
@@ -350,7 +334,11 @@ def get_fire_statistics():
         total_fires = len(SAMPLE_FIRE_DATA)
         
         # Calculate violence probabilities
-        violence_probs = [predictor.predict_violence_probability(fire) for fire in SAMPLE_FIRE_DATA]
+        try:
+            violence_probs = [predictor.predict_violence_probability(fire) for fire in SAMPLE_FIRE_DATA]
+        except Exception as e:
+            print(f"Error calculating violence probabilities: {e}")
+            violence_probs = []
         
         high_risk = sum(1 for p in violence_probs if p > 0.7)
         medium_risk = sum(1 for p in violence_probs if 0.4 < p <= 0.7)
